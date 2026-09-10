@@ -32,7 +32,7 @@
 
 namespace AppInfo {
     static const char* const APP_NAME = "RealTimeGUI";
-    static const char* const VERSION_STRING = "v1.0.0";
+    static const char* const VERSION_STRING = "v1.0.1";
 }
 
 const char* kAppSignature = "application/x-vnd.realtimegui";
@@ -119,77 +119,87 @@ struct DriverProfile {
     const char* settingsFileName;  // exact filename under ~/config/settings/kernel/drivers/
                                     // (nullptr if the driver has no settings file at all)
     bool supportsRealtimeBuffers;  // true only if a buffer-size/count key was actually found
-    const char* framesKey;         // settings-file key controlling buffer size, or nullptr
-    const char* countKey;          // settings-file key controlling buffer count, or nullptr
+    const char* framesKey;         // settings-file key controlling play buffer size, or nullptr
+    const char* countKey;          // settings-file key controlling play buffer count, or nullptr
+    const char* recordFramesKey;   // key controlling record buffer size, or nullptr if the
+                                    // driver has no separate record-side key
+    const char* recordCountKey;    // key controlling record buffer count, or nullptr
     const char* sourceNote;        // what was actually confirmed, and where
 };
 
 const DriverProfile kDriverProfiles[] = {
     { "hda", "Intel HD Audio (hda)", "hda.settings", true,
       "play_buffer_frames", "play_buffer_count",
+      "record_buffer_frames", "record_buffer_count",
       "Confirmed via haiku/haiku's hda_multi_audio.cpp and hda.settings. The settings "
       "file's own comment: latency is roughly 2*buffer_frames/sample_rate at minimum, "
       "and its own worked example recommends 1024 frames at 192000Hz for under 15ms." },
 
     { "auich", "Intel AC'97 (auich)", "auich.settings", true,
-      "buffer_frames", "buffer_count",
+      "buffer_frames", "buffer_count", nullptr, nullptr,
       "Confirmed via ac97/auich/auich.settings. That file also exposes its own "
       "sample_rate and use_thread keys, deliberately left untouched here -- your "
       "system's Media preferences already control the sample rate, and use_thread's "
-      "effect wasn't something this app's own research pinned down with confidence." },
+      "effect wasn't something this app's own research pinned down with confidence. No "
+      "separate record_* keys were found -- buffer_frames/buffer_count appear to be "
+      "shared between play and record on this driver." },
 
     { "es1370", "Ensoniq ES1370 (es1370)", "es1370.settings", true,
-      "buffer_frames", "buffer_count",
+      "buffer_frames", "buffer_count", nullptr, nullptr,
       "Confirmed via ac97/es1370/es1370.settings (shipped example: 512 frames, "
-      "2 buffers, at 44100Hz)." },
+      "2 buffers, at 44100Hz). No separate record_* keys were found." },
 
     { "echo", "Echo Digital Audio (echo)", "echo.settings", true,
-      "buffer_frames", "buffer_count",
+      "buffer_frames", "buffer_count", nullptr, nullptr,
       "Confirmed via audio/echo/echo.settings (shipped example: 512 frames, 2 buffers, "
-      "48000Hz, 16-bit, 2 channels). This driver's devfs segment name is inferred from "
-      "its own DRIVER_NAME macro, not independently traced through its publish path the "
-      "way hda/auich/es1370/emuxki/ice1712 were -- flagging that in case it's wrong for "
-      "your specific card." },
+      "48000Hz, 16-bit, 2 channels). No separate record_* keys were found. This driver's "
+      "devfs segment name is inferred from its own DRIVER_NAME macro, not independently "
+      "traced through its publish path the way hda/auich/es1370/emuxki/ice1712 were -- "
+      "flagging that in case it's wrong for your specific card." },
 
     { "emuxki", "Creative Sound Blaster Live!/Audigy (emuxki)", "emuxki.settings", true,
-      "buffer_frames", "buffer_count",
+      "buffer_frames", "buffer_count", nullptr, nullptr,
       "Confirmed via audio/emuxki/emuxki.settings and emuxki.c's own publish_devices() "
-      "(shipped example: 512 frames, 2 buffers, 48000Hz, 16-bit, 2 channels)." },
+      "(shipped example: 512 frames, 2 buffers, 48000Hz, 16-bit, 2 channels). No "
+      "separate record_* keys were found." },
 
     { "ice1712", "VIA Envy24 / ICE1712 (ice1712)", "ice1712.settings", true,
-      "buffer_size", nullptr,
+      "buffer_size", nullptr, nullptr, nullptr,
       "Confirmed via audio/ice1712/ice1712.settings and ice1712.cpp's own "
       "HMULTI_AUDIO_DEV_PATH. This driver only exposes a single buffer_size key -- no "
-      "separate buffer-count key was found." },
+      "separate buffer-count or record_* key was found." },
 
-    { "sis7018", "SiS 7018 (sis7018)", "sis7018", false, nullptr, nullptr,
+    { "sis7018", "SiS 7018 (sis7018)", "sis7018", false, nullptr, nullptr, nullptr, nullptr,
       "Confirmed via ac97/sis7018/sis7018.settings.sample and Driver.cpp: this driver's "
       "settings file (note: the sample itself says to rename it to plain \"sis7018\", "
       "not \"sis7018.settings\") only controls debug tracing/logging, not buffer sizing." },
 
     { "usb", "USB Audio Class (usb_audio)", "usb_audio.settings", false, nullptr, nullptr,
+      nullptr, nullptr,
       "Confirmed via audio/usb/Driver.h, Driver.cpp and usb_audio.settings: buffer size "
       "(2048 samples / 2 sub-buffers) is hardcoded in the driver itself, and the "
       "settings file only controls debug tracing/logging, not buffer sizing. This is "
       "likely what many real-time USB audio interfaces will show up as." },
 
-    { "auvia", "VIA VT82xx AC'97 (auvia)", nullptr, false, nullptr, nullptr,
+    { "auvia", "VIA VT82xx AC'97 (auvia)", nullptr, false, nullptr, nullptr, nullptr, nullptr,
       "Confirmed via directory listing -- no .settings file at all ships with this "
       "driver." },
 
-    { "geode", "AMD Geode (geode)", nullptr, false, nullptr, nullptr,
+    { "geode", "AMD Geode (geode)", nullptr, false, nullptr, nullptr, nullptr, nullptr,
       "Confirmed via directory listing -- no .settings file at all ships with this "
       "driver." },
 
-    { "sb16", "Sound Blaster 16 (sb16)", nullptr, false, nullptr, nullptr,
+    { "sb16", "Sound Blaster 16 (sb16)", nullptr, false, nullptr, nullptr, nullptr, nullptr,
       "Confirmed via directory listing -- no .settings file at all ships with this "
       "driver." },
 
     { "virtio", "VirtIO Sound (virtual machines)", nullptr, false, nullptr, nullptr,
+      nullptr, nullptr,
       "Confirmed via directory listing -- no .settings file at all ships with this "
       "driver." },
 
     { "null", "Null Audio (no real hardware)", nullptr, false, nullptr, nullptr,
+      nullptr, nullptr,
       "A placeholder device Haiku can publish when nothing else claims the slot -- "
       "nothing to tune." },
 };
@@ -383,45 +393,68 @@ static bool WriteStringToFile(const char* path, const BString& content) {
     return true;
 }
 
+// Updates one settings key to `value`, touching only genuinely ACTIVE
+// (uncommented) lines. A commented-out line is inert to the driver either
+// way, and this app's key-name matching can't reliably tell a real
+// disabled setting apart from documentation prose that happens to mention
+// the same key name inside a comment -- hda.settings's own header, for
+// instance, shows "play_buffer_frames 1024" as a comment purely as a
+// worked example. An earlier version of this matching logic stripped a
+// leading '#' from *any* line and compared, so it matched that example
+// (appearing earlier in the file) before ever reaching the real settings
+// block further down -- confirmed via real-world testing, where it
+// produced a duplicate active key instead of updating the real one.
+//
+// Every existing active line for this key, anywhere in the file, is
+// removed (normally just one, but this also self-heals a file the bug
+// above already left with more than one), then exactly one fresh active
+// line is inserted at the first removed line's position -- or appended
+// at the end of the file if the key wasn't active anywhere yet.
 static void UpsertSettingKey(BString* content, const char* key, int32 value) {
     BString keyPattern(key);
     int32 lineStart = 0;
-    bool replaced = false;
+    int32 firstMatchPos = -1;
 
     while (lineStart < content->Length()) {
         int32 lineEnd = content->FindFirst('\n', lineStart);
-        if (lineEnd < 0)
+        bool hasNewline = lineEnd >= 0;
+        if (!hasNewline)
             lineEnd = content->Length();
 
         BString line;
         content->CopyInto(line, lineStart, lineEnd - lineStart);
         BString bare = line;
         bare.Trim();
-        if (bare.StartsWith("#")) {
-            bare.Remove(0, 1);
-            bare.Trim();
-        }
 
-        if (bare.StartsWith(keyPattern)) {
+        bool isActiveMatch = false;
+        if (!bare.StartsWith("#") && bare.StartsWith(keyPattern)) {
             char afterKey = bare.Length() > keyPattern.Length()
                 ? bare[keyPattern.Length()] : '\0';
-            if (afterKey == '\0' || afterKey == ' ' || afterKey == '\t') {
-                BString newLine;
-                newLine << key << "\t" << value;
-                content->Remove(lineStart, lineEnd - lineStart);
-                content->Insert(newLine, lineStart);
-                replaced = true;
-                break;
-            }
+            isActiveMatch = (afterKey == '\0' || afterKey == ' ' || afterKey == '\t');
         }
 
-        lineStart = lineEnd + 1;
+        if (isActiveMatch) {
+            if (firstMatchPos < 0)
+                firstMatchPos = lineStart;
+            int32 removeLen = lineEnd - lineStart + (hasNewline ? 1 : 0);
+            content->Remove(lineStart, removeLen);
+            // Don't advance lineStart -- whatever followed this line has
+            // just shifted into this same position.
+            continue;
+        }
+
+        lineStart = hasNewline ? lineEnd + 1 : lineEnd;
     }
 
-    if (!replaced) {
+    BString newLine;
+    newLine << key << "\t" << value << "\n";
+
+    if (firstMatchPos >= 0) {
+        content->Insert(newLine, firstMatchPos);
+    } else {
         if (content->Length() > 0 && (*content)[content->Length() - 1] != '\n')
             content->Append("\n");
-        (*content) << key << "\t" << value << "\n";
+        content->Append(newLine);
     }
 }
 
@@ -451,6 +484,11 @@ public:
         fFramesControl = new BTextControl("frames_control", "Play buffer frames:", "", nullptr);
         fCountControl = new BTextControl("count_control", "Play buffer count:", "", nullptr);
 
+        fRecordFramesControl = new BTextControl("record_frames_control",
+            "Record buffer frames:", "", nullptr);
+        fRecordCountControl = new BTextControl("record_count_control",
+            "Record buffer count:", "", nullptr);
+
         fUnavailableLabel = new BStringView("unavailable_label", "");
         fUnavailableLabel->SetFont(be_bold_font);
 
@@ -470,6 +508,10 @@ public:
                 .AddGroup(B_HORIZONTAL, B_USE_ITEM_SPACING)
                     .Add(fFramesControl)
                     .Add(fCountControl)
+                .End()
+                .AddGroup(B_HORIZONTAL, B_USE_ITEM_SPACING)
+                    .Add(fRecordFramesControl)
+                    .Add(fRecordCountControl)
                 .End()
                 .Add(fTargetPathLabel)
                 .AddGlue()
@@ -603,6 +645,26 @@ private:
                 fCountControl->SetEnabled(false);
             }
 
+            if (fActiveProfile->recordFramesKey != nullptr) {
+                BString recFramesStr;
+                recFramesStr << rec.frames;
+                fRecordFramesControl->SetText(recFramesStr.String());
+                fRecordFramesControl->SetEnabled(true);
+            } else {
+                fRecordFramesControl->SetText("");
+                fRecordFramesControl->SetEnabled(false);
+            }
+
+            if (fActiveProfile->recordCountKey != nullptr) {
+                BString recCountStr;
+                recCountStr << rec.count;
+                fRecordCountControl->SetText(recCountStr.String());
+                fRecordCountControl->SetEnabled(true);
+            } else {
+                fRecordCountControl->SetText("");
+                fRecordCountControl->SetEnabled(false);
+            }
+
             fFramesControl->SetEnabled(true);
             fApplyBtn->SetEnabled(true);
 
@@ -613,8 +675,12 @@ private:
         } else {
             fFramesControl->SetText("");
             fCountControl->SetText("");
+            fRecordFramesControl->SetText("");
+            fRecordCountControl->SetText("");
             fFramesControl->SetEnabled(false);
             fCountControl->SetEnabled(false);
+            fRecordFramesControl->SetEnabled(false);
+            fRecordCountControl->SetEnabled(false);
             fApplyBtn->SetEnabled(false);
             fTargetPathLabel->SetText("");
 
@@ -669,6 +735,30 @@ private:
             }
         }
 
+        int32 recordFrames = -1;
+        if (fActiveProfile->recordFramesKey != nullptr) {
+            recordFrames = atol(fRecordFramesControl->Text());
+            if (recordFrames < 16 || recordFrames > 65536) {
+                BAlert* alert = new BAlert("Invalid value",
+                    "Record buffer frames should be a reasonable number, e.g. between "
+                    "16 and 65536.", "OK");
+                alert->Go();
+                return;
+            }
+        }
+
+        int32 recordCount = -1;
+        if (fActiveProfile->recordCountKey != nullptr) {
+            recordCount = atol(fRecordCountControl->Text());
+            if (recordCount < 2 || recordCount > 64) {
+                BAlert* alert = new BAlert("Invalid value",
+                    "Record buffer count should be a reasonable number, e.g. between "
+                    "2 and 64.", "OK");
+                alert->Go();
+                return;
+            }
+        }
+
         BString settingsDir = ResolveDriverSettingsDir();
         EnsureDirectoryExists(settingsDir);
 
@@ -685,14 +775,25 @@ private:
         UpsertSettingKey(&content, fActiveProfile->framesKey, frames);
         if (fActiveProfile->countKey != nullptr)
             UpsertSettingKey(&content, fActiveProfile->countKey, count);
+        if (fActiveProfile->recordFramesKey != nullptr)
+            UpsertSettingKey(&content, fActiveProfile->recordFramesKey, recordFrames);
+        if (fActiveProfile->recordCountKey != nullptr)
+            UpsertSettingKey(&content, fActiveProfile->recordCountKey, recordCount);
 
         if (WriteStringToFile(targetPath.String(), content)) {
             BString msg;
             msg << "Wrote " << frames;
             if (count > 0)
-                msg << " frames / " << count << " buffers";
+                msg << " frames / " << count << " play buffers";
             else
-                msg << " frames";
+                msg << " play frames";
+            if (recordFrames > 0) {
+                msg << ", " << recordFrames;
+                if (recordCount > 0)
+                    msg << " frames / " << recordCount << " record buffers";
+                else
+                    msg << " record frames";
+            }
             msg << " to " << targetPath << ".\n\nRestart Media Services (or reboot) for "
                 "the new settings to take effect.";
             BAlert* alert = new BAlert("Settings updated", msg.String(), "OK");
@@ -712,6 +813,8 @@ private:
     BTextView*    fExplanationView;
     BTextControl* fFramesControl;
     BTextControl* fCountControl;
+    BTextControl* fRecordFramesControl;
+    BTextControl* fRecordCountControl;
     BButton*      fApplyBtn;
     BButton*      fRescanBtn;
 

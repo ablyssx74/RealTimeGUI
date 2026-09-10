@@ -61,7 +61,7 @@ to the rest. Two examples of why that assumption would have broken things:
 
 | Driver | devfs segment | Settings file | Tunable? | Keys |
 |---|---|---|---|---|
-| Intel HD Audio | `hda` | `hda.settings` | Yes | `play_buffer_frames`, `play_buffer_count` (+ `record_*`, not written by this app) |
+| Intel HD Audio | `hda` | `hda.settings` | Yes | `play_buffer_frames`, `play_buffer_count`, `record_buffer_frames`, `record_buffer_count` |
 | Intel AC'97 | `auich` | `auich.settings` | Yes | `buffer_frames`, `buffer_count` |
 | Ensoniq ES1370 | `es1370` | `es1370.settings` | Yes | `buffer_frames`, `buffer_count` |
 | Echo Digital Audio | `echo` | `echo.settings` | Yes | `buffer_frames`, `buffer_count` |
@@ -117,11 +117,26 @@ in-app so you can judge for yourself.
 
 ## Applying a setting
 
-Writes are line-oriented and conservative: an existing key (commented out
-or not) has its value replaced in place; a key that isn't present yet is
-appended. Everything else already in the file is left untouched. A file
-that doesn't exist yet is created with a short header noting it was
-written by this app.
+Writes touch only genuinely **active** (uncommented) lines: an existing
+active line for a key has its value replaced in place; a key that isn't
+active anywhere in the file yet gets one fresh active line appended.
+Everything else already in the file -- comments, other keys, a driver's own
+shipped documentation -- is left untouched. A file that doesn't exist yet is
+created with a short header noting it was written by this app.
+
+An earlier version's matching was less careful: it stripped a leading `#`
+from *any* line and compared, so it couldn't tell a driver's own
+commented-out worked example (e.g. `hda.settings`'s own header shows
+`#     play_buffer_frames	1024` purely as documentation) apart from a real
+setting. Real-world testing against `hda.settings` confirmed this matched
+that documentation line first and rewrote it instead of the real one
+further down, leaving two active `play_buffer_frames` lines in the file --
+a real conflict a driver has no defined way to resolve. Fixed by only ever
+considering already-active lines as something to touch; a commented line
+is inert to the driver either way, so there's no need to interpret one,
+whatever it says. The fix also removes *every* active line for a key
+before inserting the new one, which self-heals a file the older version
+already left with a duplicate.
 
 **Restart Media Services (or reboot) for a new setting to actually take
 effect** -- Haiku's kernel drivers read their settings file at driver load
@@ -129,10 +144,6 @@ time, not continuously.
 
 ## Known limitations, honestly
 
-- Only `play_buffer_frames`/`buffer_frames`/`buffer_size`-style keys are
-  exposed and written. `hda`'s own separate `record_buffer_frames`/`record_buffer_count`
-  keys exist but aren't touched by this version -- out of scope for what
-  was actually asked for (real-time *monitoring* latency, i.e. playback).
 - If more than one audio device is active at once (e.g. an HDMI output
   alongside a real audio interface), this version shows and lets you tune
   only the first *tunable* one found, not a picker across all of them.
