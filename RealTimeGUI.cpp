@@ -32,7 +32,7 @@
 
 namespace AppInfo {
     static const char* const APP_NAME = "RealTimeGUI";
-    static const char* const VERSION_STRING = "v1.0.1";
+    static const char* const VERSION_STRING = "v1.0.2";
 }
 
 const char* kAppSignature = "application/x-vnd.realtimegui";
@@ -465,7 +465,7 @@ static void UpsertSettingKey(BString* content, const char* key, int32 value) {
 class RealTimeWindow : public BWindow {
 public:
     RealTimeWindow()
-        : BWindow(BRect(0, 0, 560, 360), "RealTimeGUI -- Audio Real-Time Settings",
+        : BWindow(BRect(0, 0, 560, 250), "RealTimeGUI -- Audio Real-Time Settings",
               B_DOCUMENT_WINDOW, B_NOT_ZOOMABLE | B_AUTO_UPDATE_SIZE_LIMITS) {
 
         fDriverLabel = new BStringView("driver_label", "Detecting audio driver...");
@@ -479,7 +479,7 @@ public:
         fExplanationView->SetWordWrap(true);
         fExplanationView->SetViewUIColor(B_PANEL_BACKGROUND_COLOR);
         fExplanationView->SetLowUIColor(B_PANEL_BACKGROUND_COLOR);
-        fExplanationView->SetExplicitMinSize(BSize(540.0, 150.0));
+        fExplanationView->SetExplicitMinSize(BSize(540.0, 45.0));
 
         fFramesControl = new BTextControl("frames_control", "Play buffer frames:", "", nullptr);
         fCountControl = new BTextControl("count_control", "Play buffer count:", "", nullptr);
@@ -615,20 +615,13 @@ private:
             BufferRecommendation rec = ComputeRecommendation(sampleRate);
 
             BString explanation;
-            explanation << fActiveProfile->label << " supports real-time buffer tuning.\n\n";
             explanation << "Recommended: " << rec.frames << " frames / " << rec.count
                 << " buffers at your current " << (int32)sampleRate << " Hz -- about ";
             char msBuf[32];
             snprintf(msBuf, sizeof(msBuf), "%.2f", rec.perBufferMs);
             explanation << msBuf << "ms per buffer, ";
             snprintf(msBuf, sizeof(msBuf), "%.2f", rec.totalLatencyMs);
-            explanation << msBuf << "ms of total buffered latency.\n\n";
-            explanation << "This targets the same per-buffer duration as a real-world "
-                "confirmed 128 frames / 4 buffers @ 48000Hz setup, scaled to your own "
-                "frequency. It's a starting point, not a guarantee -- if you hear "
-                "clicks or pops at this setting, try raising the buffer count before "
-                "raising the frame count (cheaper in added latency).\n\n";
-            explanation << "Source: " << fActiveProfile->sourceNote;
+            explanation << msBuf << "ms of total buffered latency.";
             fExplanationView->SetText(explanation.String());
 
             BString framesStr;
