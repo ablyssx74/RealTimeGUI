@@ -1,20 +1,43 @@
 SHELL := /bin/bash
 TARGET = RealTimeGUI
+
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M), BePC)
+CXX = g++-x86 
+CC = gcc-x86
+CXXFLAGS = -std=c++17 -O3 -Wall
+MAKE := setarch x86 $(MAKE)
+ARCH = x86_gcc2
+is32bit = _x86
+SIMD_FLAGS := -O2
+is32bit = _x86
+INCLUDE = -L/boot/system/lib/x86 
+else
+CXX = g++
+CC = gcc
+CXXFLAGS = -std=c++17 -O3 -Wall
+ARCH = x86_64
+SIMD_FLAGS := -O3
+INCLUDE = -L/boot/system/lib
+endif
+
+
 SUMMARY = Audio driver real-time buffer settings assistant
 DESCRIPTION = Detects your audio driver and current frequency\, then helps you tune and apply its real-time buffer settings
 AUTHOR = ablyss
 LICENSE = MIT
 URLS = https:\/\/github.com\/ablyssx74\/$(TARGET)
-REQUIRES = haiku\n    curl\n
+REQUIRES = haiku\n    curl$(is32bit)\n
 PACKAGER = $(AUTHOR) <$(TARGET)@epluribusunix.net>
 VENDOR = epluribusunix.net Project
-VERSION = 1.0.2
+VERSION = 1.0.3
 REVISION = 1
 PACKAGE_DIR := build/package
-CXX = g++
-CXXFLAGS = -std=c++17 -O3 -Wall
-INCLUDES =
-ARCH = x86_64
+
+
+
+
+
 
 GUI_SRCS = $(TARGET).cpp
 GUI_OBJS = $(GUI_SRCS:.cpp=.o)
@@ -27,7 +50,7 @@ else
 endif
 
 
-LIBS =  -lbe -lmedia
+LIBS =  -lbe -lmedia -lcurl
 
 
 .PHONY: all clean

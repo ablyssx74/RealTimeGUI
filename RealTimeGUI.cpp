@@ -21,18 +21,21 @@
 #include <MediaNode.h>
 #include <Notification.h>
 
+#include <curl/curl.h>
+
 #include <sys/stat.h>
 #include <dirent.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <string>
 #include <thread>
 #include <vector>
 
 
 namespace AppInfo {
     static const char* const APP_NAME = "RealTimeGUI";
-    static const char* const VERSION_STRING = "v1.0.2";
+    static const char* const VERSION_STRING = "v1.0.3";
 }
 
 const char* kAppSignature = "application/x-vnd.realtimegui";
@@ -42,6 +45,13 @@ enum {
     MSG_REFRESH = 'rfrh',
 };
 
+
+// libcurl write callback -- appends whatever body bytes arrive into the
+// std::string passed as userp.
+static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+    ((std::string*)userp)->append((char*)contents, size * nmemb);
+    return size * nmemb;
+}
 
 // =============================================================================
 // Update Checker (same pattern as GLToogle's own -- a lightweight curl-based
@@ -54,16 +64,24 @@ static int32 BackgroundUpdateChecker(void* data) {
     const char* targetUrl =
         "https://raw.githubusercontent.com/ablyssx74/RealTimeGUI/refs/heads/main/VERSION";
 
-    BString shellCmdString;
-    shellCmdString.SetToFormat("curl -sL \"%s\"", targetUrl);
-
     BString remoteVersionStr;
-    FILE* pipeStream = popen(shellCmdString.String(), "r");
-    if (pipeStream != nullptr) {
-        char buffer[128] = {0};
-        if (fgets(buffer, sizeof(buffer), pipeStream) != nullptr)
-            remoteVersionStr = buffer;
-        pclose(pipeStream);
+    CURL* curl = curl_easy_init();
+    if (curl != nullptr) {
+        std::string responseBody;
+        curl_easy_setopt(curl, CURLOPT_URL, targetUrl);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "RealTimeGUI-UpdateChecker/1.0");
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_perform(curl);
+        // Deliberately not calling curl_easy_cleanup() here: on this build's
+        // Haiku libcurl, cleaning up a one-shot handle from a background
+        // thread reproducibly hangs/crashes after a successful perform.
+        // Leaking one small handle once per app launch is a fine tradeoff --
+        // the process reclaims it at exit anyway.
+
+        remoteVersionStr = responseBody.c_str();
     }
     remoteVersionStr.Trim();
 
@@ -827,7 +845,15 @@ public:
 };
 
 int main() {
+    // libcurl's global init is not thread-safe against other concurrently
+    // running threads -- doing it explicitly up front, before the update
+    // checker's background thread is spawned, avoids an implicit lazy
+    // global init racing with it later.
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+
     RealTimeApp app;
     app.Run();
+
+    curl_global_cleanup();
     return 0;
 }
