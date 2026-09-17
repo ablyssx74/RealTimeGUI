@@ -30,7 +30,7 @@ URLS = https:\/\/github.com\/ablyssx74\/$(TARGET)
 REQUIRES = haiku\n    curl$(is32bit)\n
 PACKAGER = $(AUTHOR) <$(TARGET)@epluribusunix.net>
 VENDOR = epluribusunix.net Project
-VERSION = 1.0.3
+VERSION = 1.0.4
 REVISION = 1
 PACKAGE_DIR := build/package
 

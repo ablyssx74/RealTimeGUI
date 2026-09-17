@@ -35,7 +35,7 @@
 
 namespace AppInfo {
     static const char* const APP_NAME = "RealTimeGUI";
-    static const char* const VERSION_STRING = "v1.0.3";
+    static const char* const VERSION_STRING = "v1.0.4";
 }
 
 const char* kAppSignature = "application/x-vnd.realtimegui";
@@ -75,11 +75,7 @@ static int32 BackgroundUpdateChecker(void* data) {
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
         curl_easy_perform(curl);
-        // Deliberately not calling curl_easy_cleanup() here: on this build's
-        // Haiku libcurl, cleaning up a one-shot handle from a background
-        // thread reproducibly hangs/crashes after a successful perform.
-        // Leaking one small handle once per app launch is a fine tradeoff --
-        // the process reclaims it at exit anyway.
+        curl_easy_cleanup(curl);
 
         remoteVersionStr = responseBody.c_str();
     }
