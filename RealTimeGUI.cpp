@@ -19,7 +19,9 @@
 #include <MediaRoster.h>
 #include <MediaDefs.h>
 #include <MediaNode.h>
+#include <MessageRunner.h>
 #include <Notification.h>
+#include <OS.h>
 
 #include <curl/curl.h>
 
@@ -35,14 +37,15 @@
 
 namespace AppInfo {
     static const char* const APP_NAME = "RealTimeGUI";
-    static const char* const VERSION_STRING = "v1.0.4";
+    static const char* const VERSION_STRING = "v1.1.0";
 }
 
 const char* kAppSignature = "application/x-vnd.realtimegui";
 
 enum {
-    MSG_APPLY   = 'aply',
-    MSG_REFRESH = 'rfrh',
+    MSG_APPLY     = 'aply',
+    MSG_REFRESH   = 'rfrh',
+    MSG_LIVE_POLL = 'live',
 };
 
 
@@ -260,12 +263,34 @@ static const DriverProfile* FindDriverProfile(const BString& segment) {
     return nullptr;
 }
 
-// Queries the current physical audio output's actual negotiated sample
-// rate via BMediaRoster's public API (GetAudioOutput() for the physical
-// sink node, GetAllOutputsFor()/GetFormatFor() for its live format) --
-// this reads whatever frequency is actually running right now, which is
-// what Haiku's own Media preferences "Frequency" control sets.
-static bool DetectCurrentSampleRate(double* outRate) {
+// A snapshot of what the physical audio output is actually doing right
+// now, as opposed to what's on disk in a driver's settings file. Every
+// field here comes from a real, confirmed-existing BMediaRoster call --
+// there is no overrun/underrun/xrun counter to report because none
+// exists anywhere in Haiku's public media APIs, nor in the multi_audio
+// driver protocol every driver in the catalog above shares
+// (src/add-ons/kernel/drivers/audio/generic/multi.c defines only
+// B_MULTI_GET_BUFFERS/B_MULTI_BUFFER_EXCHANGE for moving data, no
+// diagnostic fields).
+struct LiveAudioSnapshot {
+    bool haveFormat = false;
+    double frequency = 0.0;
+    int32 framesPerBuffer = 0;  // derived from the live format's buffer_size, not the
+                                 // settings file -- what's actually negotiated right now
+    int32 channelCount = 0;
+    bool haveLatency = false;
+    bigtime_t latency = 0;      // BMediaRoster::GetLatencyFor()'s own node latency
+};
+
+// Queries the current physical audio output's live negotiated format
+// (GetAudioOutput() for the physical sink node, GetAllOutputsFor() /
+// GetFormatFor() for its live format) and end-to-end latency
+// (GetLatencyFor()) -- the same node Haiku's own Media preferences
+// "Frequency" control reflects. framesPerBuffer is computed from
+// buffer_size (bytes per buffer) divided by bytes-per-frame
+// (channel_count * sample size), per media_raw_audio_format's own
+// documented sample-size mask.
+static bool DetectLiveAudioSnapshot(LiveAudioSnapshot* out) {
     BMediaRoster* roster = BMediaRoster::Roster();
     if (roster == nullptr)
         return false;
@@ -276,20 +301,31 @@ static bool DetectCurrentSampleRate(double* outRate) {
 
     media_output outputs[8];
     int32 outputCount = 0;
-    bool found = false;
     if (roster->GetAllOutputsFor(audioOutputNode, outputs, 8, &outputCount) == B_OK) {
-        for (int32 i = 0; i < outputCount && !found; i++) {
+        for (int32 i = 0; i < outputCount && !out->haveFormat; i++) {
             media_format format;
             if (roster->GetFormatFor(outputs[i], &format) == B_OK
                     && format.type == B_MEDIA_RAW_AUDIO) {
-                *outRate = format.u.raw_audio.frame_rate;
-                found = true;
+                const media_raw_audio_format& raw = format.u.raw_audio;
+                out->frequency = raw.frame_rate;
+                out->channelCount = (int32)raw.channel_count;
+                int32 sampleSize = raw.format & media_raw_audio_format::B_AUDIO_SIZE_MASK;
+                int32 bytesPerFrame = sampleSize * out->channelCount;
+                if (bytesPerFrame > 0)
+                    out->framesPerBuffer = (int32)(raw.buffer_size / bytesPerFrame);
+                out->haveFormat = true;
             }
         }
     }
 
+    bigtime_t latency = 0;
+    if (roster->GetLatencyFor(audioOutputNode, &latency) == B_OK) {
+        out->latency = latency;
+        out->haveLatency = true;
+    }
+
     roster->ReleaseNode(audioOutputNode);
-    return found;
+    return out->haveFormat;
 }
 
 
@@ -472,6 +508,42 @@ static void UpsertSettingKey(BString* content, const char* key, int32 value) {
     }
 }
 
+// Reads the current on-disk value for an already-active (uncommented)
+// settings key, using the exact same active-line matching rule as
+// UpsertSettingKey above (a commented-out line, including a driver's own
+// worked-example comment, is never treated as the real value). Returns
+// false if the key has no active line in the file yet.
+static bool ReadActiveSettingValue(const BString& content, const char* key, int32* outValue) {
+    BString keyPattern(key);
+    int32 lineStart = 0;
+
+    while (lineStart < content.Length()) {
+        int32 lineEnd = content.FindFirst('\n', lineStart);
+        bool hasNewline = lineEnd >= 0;
+        if (!hasNewline)
+            lineEnd = content.Length();
+
+        BString line;
+        content.CopyInto(line, lineStart, lineEnd - lineStart);
+        BString bare = line;
+        bare.Trim();
+
+        if (!bare.StartsWith("#") && bare.StartsWith(keyPattern)) {
+            char afterKey = bare.Length() > keyPattern.Length()
+                ? bare[keyPattern.Length()] : '\0';
+            if (afterKey == '\0' || afterKey == ' ' || afterKey == '\t') {
+                BString rest(bare.String() + keyPattern.Length());
+                rest.Trim();
+                *outValue = atol(rest.String());
+                return true;
+            }
+        }
+
+        lineStart = hasNewline ? lineEnd + 1 : lineEnd;
+    }
+    return false;
+}
+
 
 // =============================================================================
 // Main window
@@ -479,7 +551,7 @@ static void UpsertSettingKey(BString* content, const char* key, int32 value) {
 class RealTimeWindow : public BWindow {
 public:
     RealTimeWindow()
-        : BWindow(BRect(0, 0, 560, 250), "RealTimeGUI -- Audio Real-Time Settings",
+        : BWindow(BRect(0, 0, 560, 340), "RealTimeGUI -- Audio Real-Time Settings",
               B_DOCUMENT_WINDOW, B_NOT_ZOOMABLE | B_AUTO_UPDATE_SIZE_LIMITS) {
 
         fDriverLabel = new BStringView("driver_label", "Detecting audio driver...");
@@ -508,6 +580,18 @@ public:
 
         fTargetPathLabel = new BStringView("target_path_label", "");
 
+        fLiveStatsLabel = new BStringView("live_stats_label", "Live Audio Stack");
+        fLiveStatsLabel->SetFont(be_bold_font);
+
+        fLiveStatsView = new BTextView("live_stats_view");
+        fLiveStatsView->MakeEditable(false);
+        fLiveStatsView->MakeSelectable(true);
+        fLiveStatsView->SetWordWrap(true);
+        fLiveStatsView->SetViewUIColor(B_PANEL_BACKGROUND_COLOR);
+        fLiveStatsView->SetLowUIColor(B_PANEL_BACKGROUND_COLOR);
+        fLiveStatsView->SetExplicitMinSize(BSize(540.0, 70.0));
+        fLiveStatsView->SetText("Waiting for first live sample...");
+
         fApplyBtn = new BButton("apply_btn", "Apply", new BMessage(MSG_APPLY));
         fApplyBtn->SetEnabled(false);
         fRescanBtn = new BButton("rescan_btn", "Rescan", new BMessage(MSG_REFRESH));
@@ -528,6 +612,8 @@ public:
                     .Add(fRecordCountControl)
                 .End()
                 .Add(fTargetPathLabel)
+                .Add(fLiveStatsLabel)
+                .Add(fLiveStatsView)
                 .AddGlue()
                 .AddGroup(B_HORIZONTAL, B_USE_ITEM_SPACING)
                     .Add(fRescanBtn)
@@ -541,8 +627,20 @@ public:
         if (updateThread >= 0)
             resume_thread(updateThread);
 
+        // Ticks the live stats box every second. A message runner (rather
+        // than a raw thread) keeps every update on this window's own
+        // message loop, so it can touch these views directly without any
+        // extra locking.
+        fLivePollRunner = new BMessageRunner(BMessenger(this), new BMessage(MSG_LIVE_POLL),
+            1000000);
+
         CenterOnScreen();
         _Refresh();
+        _UpdateLiveStats();
+    }
+
+    ~RealTimeWindow() override {
+        delete fLivePollRunner;
     }
 
     bool QuitRequested() override {
@@ -558,6 +656,10 @@ public:
 
             case MSG_APPLY:
                 _ApplySettings();
+                break;
+
+            case MSG_LIVE_POLL:
+                _UpdateLiveStats();
                 break;
 
             default:
@@ -590,8 +692,9 @@ private:
             }
         }
 
-        double sampleRate = 0.0;
-        bool haveSampleRate = DetectCurrentSampleRate(&sampleRate);
+        LiveAudioSnapshot snapshot;
+        bool haveSampleRate = DetectLiveAudioSnapshot(&snapshot) && snapshot.haveFormat;
+        double sampleRate = snapshot.frequency;
         fCurrentSampleRate = haveSampleRate ? sampleRate : 0.0;
 
         if (segments.empty()) {
@@ -717,6 +820,114 @@ private:
         InvalidateLayout();
     }
 
+    // Refreshes the "Live Audio Stack" box: the live negotiated format and
+    // node latency (both real BMediaRoster values), whether the live
+    // buffer actually matches what's applied on disk yet, and system CPU
+    // load (context for glitch risk, not a media-node statistic). Ticks
+    // once a second off fLivePollRunner.
+    void _UpdateLiveStats() {
+        LiveAudioSnapshot snapshot;
+        bool haveSnapshot = DetectLiveAudioSnapshot(&snapshot) && snapshot.haveFormat;
+
+        double cpuPercent = 0.0;
+        int32 coreCount = 0;
+        bool haveCpu = _PollCpuLoadPercent(&cpuPercent, &coreCount);
+
+        BString text;
+
+        if (haveSnapshot) {
+            text << "Live output: " << (int32)snapshot.frequency << " Hz";
+            if (snapshot.framesPerBuffer > 0)
+                text << ", " << snapshot.framesPerBuffer << " frames/buffer";
+            if (snapshot.channelCount > 0)
+                text << " (" << snapshot.channelCount << " ch)";
+            text << "\n";
+
+            if (fActiveProfile != nullptr && fActiveProfile->supportsRealtimeBuffers
+                    && snapshot.framesPerBuffer > 0) {
+                BString settingsDir = ResolveDriverSettingsDir();
+                BString targetPath;
+                targetPath << settingsDir << "/" << fActiveProfile->settingsFileName;
+                BString content = ReadFileToString(targetPath.String());
+
+                int32 appliedFrames = 0;
+                if (ReadActiveSettingValue(content, fActiveProfile->framesKey, &appliedFrames)) {
+                    if (appliedFrames == snapshot.framesPerBuffer) {
+                        text << "Applied setting (" << appliedFrames
+                            << " frames) matches the live buffer -- active now.\n";
+                    } else {
+                        text << "Applied setting is " << appliedFrames
+                            << " frames, but the live buffer is still "
+                            << snapshot.framesPerBuffer
+                            << " -- restart Media Services to apply it.\n";
+                    }
+                } else {
+                    text << "No custom buffer setting applied yet in "
+                        << fActiveProfile->settingsFileName << ".\n";
+                }
+            }
+
+            if (snapshot.haveLatency) {
+                char msBuf[32];
+                snprintf(msBuf, sizeof(msBuf), "%.2f", snapshot.latency / 1000.0);
+                text << "Output node latency: " << msBuf << "ms\n";
+            }
+        } else {
+            text << "Live output format not available right now.\n";
+        }
+
+        if (haveCpu) {
+            char pctBuf[16];
+            snprintf(pctBuf, sizeof(pctBuf), "%.0f", cpuPercent);
+            text << "System CPU load: " << pctBuf << "% across " << coreCount << " core(s)";
+        } else {
+            text << "System CPU load: measuring...";
+        }
+
+        fLiveStatsView->SetText(text.String());
+    }
+
+    // System-wide CPU load as a percentage of total capacity across all
+    // cores, from two get_cpu_info() samples taken one poll tick apart --
+    // real Haiku kernel data (get_system_info()/get_cpu_info(), <OS.h>),
+    // shown as context for glitch risk since CPU contention -- not a
+    // driver-level counter Haiku doesn't expose -- is the actual
+    // real-world cause of audio dropouts on this platform (see this app's
+    // own buffer-size recommendation notes). Returns false on the very
+    // first call, since a load percentage needs two samples.
+    bool _PollCpuLoadPercent(double* outPercent, int32* outCoreCount) {
+        system_info sysInfo;
+        if (get_system_info(&sysInfo) != B_OK || sysInfo.cpu_count == 0)
+            return false;
+
+        std::vector<cpu_info> infos(sysInfo.cpu_count);
+        if (get_cpu_info(0, sysInfo.cpu_count, infos.data()) != B_OK)
+            return false;
+
+        *outCoreCount = (int32)sysInfo.cpu_count;
+
+        bigtime_t now = system_time();
+        bool havePrev = fCpuPrevActiveTimes.size() == infos.size() && fCpuPrevRealTime > 0;
+        bigtime_t realDelta = now - fCpuPrevRealTime;
+
+        bool result = false;
+        if (havePrev && realDelta > 0) {
+            bigtime_t activeDelta = 0;
+            for (size_t i = 0; i < infos.size(); i++)
+                activeDelta += infos[i].active_time - fCpuPrevActiveTimes[i];
+            double capacity = (double)realDelta * (double)infos.size();
+            *outPercent = 100.0 * (double)activeDelta / capacity;
+            result = true;
+        }
+
+        fCpuPrevRealTime = now;
+        fCpuPrevActiveTimes.resize(infos.size());
+        for (size_t i = 0; i < infos.size(); i++)
+            fCpuPrevActiveTimes[i] = infos[i].active_time;
+
+        return result;
+    }
+
     void _ApplySettings() {
         if (fActiveProfile == nullptr || !fActiveProfile->supportsRealtimeBuffers)
             return;
@@ -822,12 +1033,19 @@ private:
     BTextControl* fCountControl;
     BTextControl* fRecordFramesControl;
     BTextControl* fRecordCountControl;
+    BStringView*  fLiveStatsLabel;
+    BTextView*    fLiveStatsView;
     BButton*      fApplyBtn;
     BButton*      fRescanBtn;
+
+    BMessageRunner* fLivePollRunner = nullptr;
 
     const DriverProfile* fActiveProfile = nullptr;
     BString fUnknownSegment;
     double fCurrentSampleRate = 0.0;
+
+    bigtime_t fCpuPrevRealTime = 0;
+    std::vector<bigtime_t> fCpuPrevActiveTimes;
 };
 
 

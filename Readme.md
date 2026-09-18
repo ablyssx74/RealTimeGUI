@@ -142,6 +142,35 @@ already left with a duplicate.
 effect** -- Haiku's kernel drivers read their settings file at driver load
 time, not continuously.
 
+## Live Audio Stack box
+
+A small stats box below the settings controls, refreshed once a second,
+showing:
+
+- **Live output frequency and buffer size** -- read straight off the
+  physical output node's currently negotiated `media_format`, not the
+  settings file. This is what's actually running right now, whether or
+  not it matches what's on disk.
+- **Whether your applied setting is actually active yet** -- compares
+  that live buffer size against the value currently active in the
+  driver's own settings file, so you can tell at a glance whether you
+  still need to restart Media Services, instead of just being told you
+  might.
+- **Output node latency**, via `BMediaRoster::GetLatencyFor()`.
+- **System-wide CPU load**, via `get_system_info()`/`get_cpu_info()` --
+  shown as context for glitch risk (CPU contention is the actual
+  real-world cause of audio dropouts on this platform), not a media-node
+  statistic.
+
+**What's deliberately not in this box: a buffer overrun/underrun/xrun
+counter.** No such thing exists anywhere in Haiku's public media APIs, nor
+in the `multi_audio` driver protocol every driver in the catalog above
+shares (`src/add-ons/kernel/drivers/audio/generic/multi.c` defines only
+`B_MULTI_GET_BUFFERS`/`B_MULTI_BUFFER_EXCHANGE` for moving buffer data,
+with no diagnostic counters attached) -- confirmed by reading that source
+directly rather than assumed. Faking one would go against everything else
+this app tries to be honest about, so it's left out rather than invented.
+
 ## Known limitations, honestly
 
 - If more than one audio device is active at once (e.g. an HDMI output
