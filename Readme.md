@@ -156,20 +156,33 @@ showing:
   driver's own settings file, so you can tell at a glance whether you
   still need to restart Media Services, instead of just being told you
   might.
-- **Output node latency**, via `BMediaRoster::GetLatencyFor()`.
 - **System-wide CPU load**, via `get_system_info()`/`get_cpu_info()` --
   shown as context for glitch risk (CPU contention is the actual
   real-world cause of audio dropouts on this platform), not a media-node
   statistic.
 
-**What's deliberately not in this box: a buffer overrun/underrun/xrun
-counter.** No such thing exists anywhere in Haiku's public media APIs, nor
-in the `multi_audio` driver protocol every driver in the catalog above
-shares (`src/add-ons/kernel/drivers/audio/generic/multi.c` defines only
-`B_MULTI_GET_BUFFERS`/`B_MULTI_BUFFER_EXCHANGE` for moving buffer data,
-with no diagnostic counters attached) -- confirmed by reading that source
-directly rather than assumed. Faking one would go against everything else
-this app tries to be honest about, so it's left out rather than invented.
+**What's deliberately not in this box, and why:**
+
+- **A buffer overrun/underrun/xrun counter.** No such thing exists
+  anywhere in Haiku's public media APIs, nor in the `multi_audio` driver
+  protocol every driver in the catalog above shares
+  (`src/add-ons/kernel/drivers/audio/generic/multi.c` defines only
+  `B_MULTI_GET_BUFFERS`/`B_MULTI_BUFFER_EXCHANGE` for moving buffer data,
+  with no diagnostic counters attached) -- confirmed by reading that
+  source directly rather than assumed.
+- **Output node latency.** An earlier version of this box called
+  `BMediaRoster::GetLatencyFor()` on the physical output node and showed
+  its result. Real-world testing showed it always read a stale 0.00ms --
+  tracing `GetLatencyFor()`'s own implementation
+  (`src/kits/media/MediaRoster.cpp`) showed why: it rejects any node
+  without the `B_BUFFER_PRODUCER` kind flag, and only ever reports a
+  producer's downstream latency as negotiated through a real connection.
+  The physical output sink this app queries isn't a node this app
+  connects to, so there was never a real connection latency for it to
+  report. Removed rather than left showing a number that never changes.
+
+Faking either would go against everything else this app tries to be
+honest about, so both are left out rather than invented.
 
 ## Known limitations, honestly
 

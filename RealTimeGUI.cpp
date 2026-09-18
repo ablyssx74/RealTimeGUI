@@ -278,18 +278,25 @@ struct LiveAudioSnapshot {
     int32 framesPerBuffer = 0;  // derived from the live format's buffer_size, not the
                                  // settings file -- what's actually negotiated right now
     int32 channelCount = 0;
-    bool haveLatency = false;
-    bigtime_t latency = 0;      // BMediaRoster::GetLatencyFor()'s own node latency
 };
 
 // Queries the current physical audio output's live negotiated format
 // (GetAudioOutput() for the physical sink node, GetAllOutputsFor() /
-// GetFormatFor() for its live format) and end-to-end latency
-// (GetLatencyFor()) -- the same node Haiku's own Media preferences
-// "Frequency" control reflects. framesPerBuffer is computed from
-// buffer_size (bytes per buffer) divided by bytes-per-frame
+// GetFormatFor() for its live format) -- the same node Haiku's own Media
+// preferences "Frequency" control reflects. framesPerBuffer is computed
+// from buffer_size (bytes per buffer) divided by bytes-per-frame
 // (channel_count * sample size), per media_raw_audio_format's own
 // documented sample-size mask.
+//
+// Deliberately not attempted here: BMediaRoster::GetLatencyFor(). Its own
+// implementation (src/kits/media/MediaRoster.cpp) rejects any node
+// without the B_BUFFER_PRODUCER kind flag with B_MEDIA_BAD_NODE, and only
+// ever returns a producer's downstream latency as negotiated through a
+// real connection -- the physical output sink this app queries isn't one
+// this app connects to, so there's no real connection latency to report.
+// An earlier version called it anyway and it silently reported a stale
+// 0.00ms on every real device tested, which is worse than not showing
+// the line at all.
 static bool DetectLiveAudioSnapshot(LiveAudioSnapshot* out) {
     BMediaRoster* roster = BMediaRoster::Roster();
     if (roster == nullptr)
@@ -316,12 +323,6 @@ static bool DetectLiveAudioSnapshot(LiveAudioSnapshot* out) {
                 out->haveFormat = true;
             }
         }
-    }
-
-    bigtime_t latency = 0;
-    if (roster->GetLatencyFor(audioOutputNode, &latency) == B_OK) {
-        out->latency = latency;
-        out->haveLatency = true;
     }
 
     roster->ReleaseNode(audioOutputNode);
@@ -820,11 +821,11 @@ private:
         InvalidateLayout();
     }
 
-    // Refreshes the "Live Audio Stack" box: the live negotiated format and
-    // node latency (both real BMediaRoster values), whether the live
-    // buffer actually matches what's applied on disk yet, and system CPU
-    // load (context for glitch risk, not a media-node statistic). Ticks
-    // once a second off fLivePollRunner.
+    // Refreshes the "Live Audio Stack" box: the live negotiated format
+    // (a real BMediaRoster value), whether that live buffer actually
+    // matches what's applied on disk yet, and system CPU load (context
+    // for glitch risk, not a media-node statistic). Ticks once a second
+    // off fLivePollRunner.
     void _UpdateLiveStats() {
         LiveAudioSnapshot snapshot;
         bool haveSnapshot = DetectLiveAudioSnapshot(&snapshot) && snapshot.haveFormat;
@@ -865,12 +866,6 @@ private:
                     text << "No custom buffer setting applied yet in "
                         << fActiveProfile->settingsFileName << ".\n";
                 }
-            }
-
-            if (snapshot.haveLatency) {
-                char msBuf[32];
-                snprintf(msBuf, sizeof(msBuf), "%.2f", snapshot.latency / 1000.0);
-                text << "Output node latency: " << msBuf << "ms\n";
             }
         } else {
             text << "Live output format not available right now.\n";
