@@ -1,9 +1,9 @@
 resource app_signature "application/x-vnd.realtimegui";
 resource app_flags B_SINGLE_LAUNCH;
 resource app_version {
-    major  = 1,
-    minor  = 0,
-    middle = 4,
+    major  = @V_MAJOR@,
+    middle = @V_MIDDLE@,
+    minor  = @V_MINOR@,
     variety = B_APPV_DEVELOPMENT,
     internal = 0,
     short_info = "RealTimeGUI Audio Settings Assistant",
